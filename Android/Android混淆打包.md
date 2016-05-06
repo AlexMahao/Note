@@ -131,8 +131,183 @@ Gson,fastJson等解析json数据时，就是根据实体类的映射关系，他
 ```java 
 - keep com.entity.**;
 ``` 
-
-
+-  对于Android和JS定义的接口类不能混淆
 ```java 
-Can't read [C:\appstart\MDWApp2\libs\V0.2.1.jar] (Can't process class [cn/soundtooth/spush_sdk/event/DeviceStateBroadcastReceiver.class] (Unknown verification type [255] in stack map frame))
+-keepclassmembers class com.ljd.example.JSInterface{
+	<Method>;
+}
 ```
+在js端就是通过方法名来调用对应方法的。
+
+- 需要序列化和反序列化的类。
+
+- 一些第三方类库的混淆规则
+
+
+### 混淆模板
+
+``` 
+
+#############################
+#
+# 		基本的指令
+#
+##########################
+
+# 压缩质量  0~7
+-optimizationpasses 5
+
+#不采用大小写命名的混淆  
+-dontusemixedcaseclassnames  
+
+#不跳过类库例的非公共类
+-dontskipnonpubliclibraryclasses
+
+#混淆时是否记录日志（混淆后生产映射文件 map 类名 -> 转化后类名的映射  
+-verbose
+
+#不跳过类库中的非公共方法
+-dontskipnonpubliclibraryclassmembers
+
+# 不做预校验
+-dontpreverify
+
+# 不混淆注解和内部类
+-keepattributes *Annotation*,InnerClasses
+
+#保持泛型
+-keepattributes Signature
+
+#保持源文件以及行号，友盟统计需要加入此行
+-keepattributes SourceFile,LineNumberTable
+
+# 混淆算法
+-optimizations !code/simplification/cast,!field/*,!class/merging/*
+ 
+ 
+#############################################
+#
+# Android开发中一些需要保留的公共部分
+#
+#############################################
+ 
+ ## 注册等需要类名，所以不能被混淆
+-keep public class * extends android.app.Activity
+-keep public class * extends android.app.Appliction
+-keep public class * extends android.app.Service
+-keep public class * extends android.content.BroadcastReceiver
+-keep public class * extends android.content.ContentProvider
+-keep public class * extends android.app.backup.BackupAgentHelper
+-keep public class * extends android.preference.Preference
+-keep public class * extends android.view.View
+-keep public class com.android.vending.licensing.ILicensingService
+
+## v4,v7,v13包
+-keep class android.support.** {*;}
+
+# 默认proguard-android文件已混淆，此处重复
+-keep class **.R$* {*;}
+
+# 默认proguard-android文件已混淆，此处重复
+-keepclasseswithmembernames class * {
+    native <methods>;
+}
+# 默认proguard-android文件已混淆，此处重复
+-keepclassmembers class * extends android.app.Activity{
+    public void *(android.view.View);
+}
+# 默认proguard-android文件已混淆，此处重复
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}
+#默认proguard-android文件已混淆，此处重复  添加View的构造方法不能被混淆
+-keep public class * extends android.view.View{
+    *** get*();
+    void set*(***);
+    public <init>(android.content.Context);
+    public <init>(android.content.Context, android.util.AttributeSet);
+    public <init>(android.content.Context, android.util.AttributeSet, int);
+}
+
+# 序列化
+-keep class * implements android.os.Parcelable {
+  public static final android.os.Parcelable$Creator *;
+}
+
+# 同上
+-keepclassmembers class * implements java.io.Serializable {
+    static final long serialVersionUID;
+    private static final java.io.ObjectStreamField[] serialPersistentFields;
+    private void writeObject(java.io.ObjectOutputStream);
+    private void readObject(java.io.ObjectInputStream);
+    java.lang.Object writeReplace();
+    java.lang.Object readResolve();
+}
+
+#触摸事件
+-keepclassmembers class * {
+    void *(**On*Event);
+}
+ 
+#webView处理，项目中没有使用到webView忽略即可
+-keepclassmembers class fqcn.of.javascript.interface.for.webview {
+   public *;
+}
+-keepclassmembers class * extends android.webkit.webViewClient {
+    public void *(android.webkit.WebView, java.lang.String, android.graphics.Bitmap);
+    public boolean *(android.webkit.WebView, java.lang.String);
+}
+-keepclassmembers class * extends android.webkit.webViewClient {
+    public void *(android.webkit.webView, jav.lang.String);
+}
+ 
+#############################################
+#
+# 项目中特殊处理部分
+#
+#############################################
+ 
+#-----------处理反射类---------------
+ 
+#实体类不能被混淆，用到反射的类不能被混淆
+ 
+#-----------处理js交互---------------
+ 
+# JS端调用的接口不能被混淆
+ 
+ 
+#-----------处理第三方依赖库---------
+ 
+# 一半查找三方库的开发文档，或者使用下面方法
+
+-libraryjars libs/aaa.jar
+-dontwarn com.xx.yy.**
+-keep class com.xx.yy.** { *;}
+```
+
+
+### 混淆结果
+
+在混淆之后会在工程的根目录下产生一个proguard的文件夹，包含了四个文件：
+
+- dump.txt 存储class文件的内部结构
+- mapping.txt 源码到混淆之后代码的映射信息
+- seeds.txt 被各种 -keep 选项保留的类和成员变量信息
+- usage.txt 保存 unused or dead code 的信息
+
+
+
+### 混淆错误
+
+#### Unknown verification type [255] in stack map frame)
+
+解决办法：
+
+- 找到sdk的如下目录`E:\dd\sdk\tools\proguard`
+- 将该目录拷贝出来之后找到如下文件`proguard\classfile`目录下的`ClassConstants`。
+- 打开该文件，搜索如下字段并修改`  public static final String ATTR_StackMapTable = "dummy";`
+- 运行`proguard\build`目录下的`build.sh`.重新编译
+- 找到`proguard\lib`目录下的`proguard.jar`替换到sdk中的对应位置。
+
+> 记得保存sdk中的`proguard.jar`文件，如果无法解决仍能还原。
