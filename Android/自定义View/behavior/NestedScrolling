@@ -1,0 +1,502 @@
+## NestScroll相关分析
+
+### 基本的事件分发流程
+对于一次从父布局到自布局的触摸事件流程分发，关键便是在三个方法上的流程处理`dispatchTouchEvent()`,`onInterceptTouchEvent()`,`onTouchEvent()`。由于和`NestScroll`相关，所以不细致分析到`View`层面上的事件分发。
+
+对于事件分发的触摸大致可分为按下（DOWN），移动（MOVE），抬起（UP）。按照这三个事件，流程分析如下：
+
+- 按下（DOWN）：首先调用父控件的`dispatchTouchEvent()`进行事件分发，然后在该方法中，调用`onInterceptTouchEvent()`方法，如果返回`true`表示事件被打断，则直接调用父控件的`onTouchEvent()`方法。如果没有被打断，会遍历子控件的`dispatchTouchEvent()`方法，子控件通过`onTouchEvent()`去判断是否处理事件，如果处理事件，会保存处理触摸事件的控件对象。
+- 移动（MOVE）：该事件在父控件的流程相似，区别在于当父控件不处理时，直接获取`DOWN`时的处理对象，由该保存的处理对象消耗事件。
+- 抬起（UP）： 该事件和`MOVE`事件基本相似，不做分析。
+
+由该流程，不然发现一个问题，事件很容易的向子控件传递和处理，但是子控件无法向父控件传递触摸事件。例如：当子控件滑动时，滑到一半突然不想处理事件了，想让父控件滑动会，或者子控件滑动到极限，然后让父控件滑动，这两种情况在如上的流程中很难去实现。
+
+那么对于这种情况的处理，推出了2个关键的接口以及辅助实现的类，
+```java
+// 接口
+NestedScrollingParent
+NestedScrollingChild
+// 辅助实现类
+NestedScrollingChildHelper
+NestedScrollingParentHelper
+```
+而这篇文章关键点便在这四个方法的分析。因为这四个方法是一个整体流程，在单独分析时，初始可能会有很多疑惑，此时只需要记忆，等整体流程时便会豁然开朗。
+
+### 目标Demo
+
+![](nestedScrolling.gif)
+
+有两个方框，按住橙色方块可以跟随手指滑动，当垂直滑动一定距离，再滑动时，由紫色方快滑动，橙色不在移动。
+
+具体的布局代码如下：
+
+```xml 
+<com.spearbothy.custombehavior.nestscroll.NestParent xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center_horizontal"
+    android:orientation="vertical">
+    <View
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:layout_marginTop="100dp"
+        android:background="#f0f" />
+    <com.spearbothy.custombehavior.nestscroll.NestChild
+        android:layout_width="50dp"
+        android:layout_height="50dp"
+        android:layout_marginTop="200dp"
+        android:background="#88ff7f3c" />
+</com.spearbothy.custombehavior.nestscroll.NestParent>
+```
+
+其中`NestChild`表示子控件，实现`NestedScrollingChild`接口。
+
+而`NestParent`表示父控件，实现`NestedScrollingParent`接口
+
+### `NestedScrollingChild`和`NestedScrollingChildHelper`
+
+首先考虑怎么实现子控件，子控件的目的便是在将要滑动时，通知父控件，父控件可以选择消耗或者不消耗这次滑动，然后子控件根据父控件的情况处理此次滑动，滑动完了，再将滑动的情况通知以下父控件，那么我们就能实现了上述不足中的两种情况。
+
+首先看`NestedScrollingChild`是一个接口，接口是什么，是用来定义一系列规范的，即定义具体的方法和作用，不管具体的实现。那么看一下这个接口都有那些方法：
+
+请注意：这些方法都是当前控件需要实现的方法，其中目的表示我们要在这些方法中实现哪些功能。
+
+```java
+ public void setNestedScrollingEnabled(boolean enabled);
+ public boolean isNestedScrollingEnabled();
+```
+设置和获取该控件是否可以嵌套滚动，是否参与这整个嵌套滚动的流程，和普通滑动区分，他们没有什么关系。
+
+```java
+public boolean startNestedScroll(int axes);
+```
+开始滚动滑动时调用此方法，参数为滑动的方向。目的：该方法需要实现通知父控件，我要开始滚动滑动。
+
+```java
+hasNestedScrollingParent();
+```
+当前的滚动该是否有父控件正在处理。
+
+```java
+//dx:x轴的偏移量
+//dy:y轴偏移量
+//consumed:位移消耗量，由父控件为其赋值（数组作为参数的特性？），用以表示父控件消耗了多少位移。
+// offsetInWindow: 当前控件的位置索引。
+public boolean dispatchNestedPreScroll(int dx, int dy, int[] consumed, int[] offsetInWindow);
+```
+当前控件准备滑动时的事件分发，这里的参数比较多，其中dx,dy是我们需要根据手指的触摸计算得出，而后两个数组，只需要传入size为2的数组能够存储x,y的值即可。目的：告诉父控件，我要滑动了和将要滑动的偏移量。父控件可以根据自己的情况是否消耗滑动。
+
+```java
+// dxConsumed：当前控件x轴消耗
+// dyConsumed：当前控件y轴消耗
+// dxUnconsumed，dyUnconsumed：x，y轴未消耗的
+// offsetInWindow ： 忽略..
+  public boolean dispatchNestedScroll(int dxConsumed, int dyConsumed,int dxUnconsumed, int dyUnconsumed, int[] offsetInWindow);
+```
+当前控件滑动完成之后调用。目的：通知父控件我滑动完了，你看看要咋办吧。
+
+```java
+//  滑动的速度
+public boolean dispatchNestedPreFling(float velocityX, float velocityY);
+```
+当前控件开始惯性滑动时调用。目的：告诉父控件，我要开始惯性滑动了。
+
+```java
+// consumed ： 当前控件是否消费了惯性滑动
+ public boolean dispatchNestedFling(float velocityX, float velocityY, boolean consumed);
+```
+当前控件惯性滑动结束后调用。目的：告诉父控件我惯性滑动完了，你看着办吧。
+
+```java
+public void stopNestedScroll();
+```
+停止滚动滑动时调用此方法。目的：告诉父控件，我的滑动完成了。
+
+到这里，所有方法已经分析完了，上面的分析中，主要突出了什么时机调用和要做的事情。具体的返回值等的没有解释，此时解释会更加混淆。我们只需要了解他们的调用时机和目的就够了。
+
+分析完了，就要实现这个接口并根据上面的定义实现方法。如果此时，我们定义一个`View`并实现`NestedScrollingChild`方法时，会发现`View`已经实现了这些方法，但是，我们千万不要认为，我们不需要重写，因为`View`中的方法是在21的时候加入的。如果我们不重写接口中的方法，在低版本时编译会报错。
+
+掐指一算，这么多的方法要实现，疯了～～～～突然想到，`View`中不是有实现吗，我们复制过来行不，当然可以。但这样会不会很麻烦，此时便是`NestedScrollingChildHelper`类的登场。注意，为了兼容，我们需要忽略`View`总算有关于此的实现。
+
+从名字上可以看出，他的目的就是为了辅助我们实现`NestedScrollingChild`接口的，我们只需要把这些方法的实现扔给该辅助类即可。具体实现如下：
+
+
+```java
+public class NestChild extends View implements NestedScrollingChild {
+
+    private static final String TAG = NestChild.class.getSimpleName();
+
+    private final NestedScrollingChildHelper mChildHelper;
+
+    public NestChild(Context context, @Nullable AttributeSet attrs) {
+        this(context, attrs, 0);
+    }
+
+    public NestChild(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
+        super(context, attrs, defStyleAttr);
+        // 生成辅助类，并传入当前控件
+        mChildHelper = new NestedScrollingChildHelper(this);
+        setNestedScrollingEnabled(true);
+    }
+
+    @Override
+    public boolean hasNestedScrollingParent() {
+        return mChildHelper.hasNestedScrollingParent();
+    }
+
+    @Override
+    public boolean isNestedScrollingEnabled() {
+        return mChildHelper.isNestedScrollingEnabled();
+    }
+
+    @Override
+    public void setNestedScrollingEnabled(boolean enabled) {
+        Log.i(TAG, "setNestedScrollingEnabled");
+        mChildHelper.setNestedScrollingEnabled(enabled);
+    }
+
+
+    @Override
+    public boolean startNestedScroll(int axes) {
+        Log.i(TAG, "startNestedScroll");
+        return mChildHelper.startNestedScroll(axes);
+    }
+
+    @Override
+    public void stopNestedScroll() {
+        Log.i(TAG, "stopNestedScroll");
+        mChildHelper.stopNestedScroll();
+    }
+
+    @Override
+    public boolean dispatchNestedScroll(int dxConsumed, int dyConsumed,
+                                        int dxUnconsumed, int dyUnconsumed, int[] offsetInWindow) {
+        Log.i(TAG, "dispatchNestedScroll");
+        // 滚动之后将剩余滑动传给父类
+        return mChildHelper.dispatchNestedScroll(dxConsumed, dyConsumed,
+                dxUnconsumed, dyUnconsumed, offsetInWindow);
+    }
+
+    @Override
+    public boolean dispatchNestedPreScroll(int dx, int dy, int[] consumed, int[] offsetInWindow) {
+        // 子View滚动之前将滑动距离传给父类
+        Log.i(TAG, "dispatchNestedPreScroll");
+        return mChildHelper.dispatchNestedPreScroll(dx, dy,
+                consumed, offsetInWindow);
+    }
+
+    @Override
+    public boolean dispatchNestedFling(float velocityX, float velocityY, boolean consumed) {
+        return mChildHelper.dispatchNestedFling(velocityX, velocityY,
+                consumed);
+    }
+
+    @Override
+    public boolean dispatchNestedPreFling(float velocityX, float velocityY) {
+        return mChildHelper.dispatchNestedPreFling(velocityX, velocityY);
+    }
+}
+```
+大功告成，是不是很爽。而根据我们之前的定义，我们重写`onTouchEvent()`来实现流程。
+
+```java
+@Override
+    public boolean onTouchEvent(MotionEvent event) {
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_DOWN:
+                // 启动滑动，传入方向
+                startNestedScroll(ViewCompat.SCROLL_AXIS_VERTICAL);
+                // 记录y值
+                mOldY = (int) event.getRawY();
+                break;
+            case MotionEvent.ACTION_MOVE:
+                int y = (int) event.getRawY();
+                // 计算y值的偏移
+                int offsetY = y - mOldY;
+                Log.i(TAG, mConsumed[0] + ":" + mConsumed[1] + "--" + mOffset[0] + ":" + mOffset[1]);
+                // 通知父类，如果返回true，表示父类消耗了触摸
+                if (dispatchNestedPreScroll(0, offsetY, mConsumed, mOffset)) {
+                    offsetY -= mConsumed[1];
+                }
+                int unConsumed = 0;
+                float targetY = getTranslationY() + offsetY;
+                if (targetY > -40 && targetY < 40) {
+                    setTranslationY(targetY);
+                } else {
+                    unConsumed = offsetY;
+                    offsetY = 0;
+                }
+                // 滚动完成之后，通知当前滑动的状态
+                dispatchNestedScroll(0, offsetY, 0, unConsumed, mOffset);
+                Log.i(TAG, mConsumed[0] + ":" + mConsumed[1] + "--" + mOffset[0] + ":" + mOffset[1]);
+                mOldY = y;
+                break;
+            case MotionEvent.ACTION_UP:
+                // 滑动结束
+                stopNestedScroll();
+                break;
+            default:
+                break;
+        }
+        return true;
+    }
+```
+分析一下这个流程，在`ACTION_DOWN`时，记录`y`值，并调用`startNestedScroll()`通知滑动开始。然后，在`ACTION_MOVE`中，根据每次的y值偏移，调用`dispatchNestedPreScroll()`通知父控件，我要开始偏移了，然后根据`mConsumed`判断父控件消耗的偏移量，并获取剩余偏移量，然后开始处理自己的滚动，滚动完成之后通知父控件，当前控件滚动状态（已滑动的和未消耗的）。
+
+子控件的编写到此结束，到这里可能依然一头雾水，但不要紧，下面通过实现父控件，这些方法就能串联起来。
+
+### `NestedScrollingParent`和`NestedScrollingParentHelper`
+
+在`NestedScrollingChild`中，其大部分方法需要手动调用，因为其作为事件的第一处理者，事件的所有他最清楚。而`NestedScrollingParent`,其中的方法不需要我们手动调用，他通常是作为回调的方法，在方法里处理子控件通知的回调。
+
+首先看一下`NestedScrollingParent`中所有定义的方法：
+
+```java
+//  child ： 忽略（后面说）
+// target： 滑动的目标view
+// nestedScrollAxes： 滑动的方向
+public boolean onStartNestedScroll(View child, View target, int nestedScrollAxes);
+```
+开始滑动时的回调，返回true表示父控件要处理触摸。和`child`的`startNestedScroll()`对应
+
+```java
+public void onNestedScrollAccepted(View child, View target, int nestedScrollAxes);
+```
+接受到开始滑动，在这个方法里做一些初始化。和`child`的`startNestedScroll()`对应。
+
+```java
+ public void onNestedPreScroll(View target, int dx, int dy, int[] consumed);
+```
+子控件准备滚动之前的通知，和`child`的`dispatchNestedPreScroll()`相对应。如果该方法消费了dx或dy，则在`consumed[0|1]`的对应索引上添加消耗的置。
+
+```java
+public void onNestedScroll(View target, int dxConsumed, int dyConsumed, int dxUnconsumed, int dyUnconsumed);
+```
+子控件滑动完成之后的通知，和`child`的`dispatchNestedScroll()`对应。
+
+```java
+ public boolean onNestedPreFling(View target, float velocityX, float velocityY);
+```
+子控件开始惯性滑动之前的通知，返回`true`表示父控件处理滑动。和`child`的`dispatchNestedPreFling()`对应。
+
+```java
+ public boolean onNestedFling(View target, float velocityX, float velocityY, boolean consumed);
+```
+子控件惯性滑动完成之后的通知，和`child`的`dispatchNestedFling()`对应。其中`consumed`表示子控件是否消费了滑动。
+
+```java
+ public void onStopNestedScroll(View target);
+```
+滑动结束的回调，和`child`的`stopNestedScroll()`对应。
+
+```java
+public int getNestedScrollAxes();
+```
+获取当前滑动的方向。
+
+可以看到，大部分方法是以`onXXX`命名的，他们和`onClickListener`类似，这些方法中主要对相应事件的回调做处理，对于当前，就是对子控件的滑动状态回调做处理。
+
+对于`NestedScrollingParent`,起需要我们实现的不多，主要的是对回调通知做处理，所以相应的辅助类`NestedScrollingParentHelper`只是做了最基本的状态的情况与保存。
+
+那么实现如下：
+
+```java
+public class NestParent extends LinearLayout implements NestedScrollingParent {
+
+    private static final String TAG = NestParent.class.getSimpleName();
+
+    NestedScrollingParentHelper mParentHelper;
+
+    public NestParent(Context context, @Nullable AttributeSet attrs) {
+        this(context, attrs, 0);
+    }
+
+
+    public NestParent(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
+        super(context, attrs, defStyleAttr);
+        mParentHelper = new NestedScrollingParentHelper(this);
+    }
+
+    @Override
+    public boolean onStartNestedScroll(View child, View target, int nestedScrollAxes) {
+        // 滑动的child  , 目标child , 两者唯一
+        // child  嵌套滑动的子控件(当前控件的子控件) ， target ， 手指触摸的控件
+        Log.i(TAG, "onStartNestedScroll:" + child.getClass().getSimpleName() + ":" + target.getClass().getSimpleName());
+        return true;
+    }
+
+    @Override
+    public void onNestedScrollAccepted(View child, View target, int nestedScrollAxes) {
+        mParentHelper.onNestedScrollAccepted(child, target, nestedScrollAxes);
+    }
+
+
+    @Override
+    public void onStopNestedScroll(View target) {
+        Log.i(TAG, "onStopNestedScroll" + target.getClass().getSimpleName());
+        mParentHelper.onStopNestedScroll(target);
+    }
+
+    @Override
+    public void onNestedScroll(View target, int dxConsumed, int dyConsumed, int dxUnconsumed, int dyUnconsumed) {
+        Log.i(TAG, "onNestedScroll" + target.getClass().getSimpleName());
+        Log.i(TAG, "dxUnconsumed:" + dxUnconsumed + "dyUnconsumed:" + dyUnconsumed);
+
+        getChildAt(0).setTranslationY(getChildAt(0).getTranslationY() + dyUnconsumed);
+    }
+
+    @Override
+    public void onNestedPreScroll(View target, int dx, int dy, int[] consumed) {
+        Log.i(TAG, "onNestedPreScroll" + target.getClass().getSimpleName());
+        // 开始滑动之前
+        Log.i(TAG, consumed[0] + ":" + consumed[1]);
+
+//        consumed[1] = 10;// 消费10px
+
+    }
+
+    @Override
+    public boolean onNestedFling(View target, float velocityX, float velocityY, boolean consumed) {
+        // 惯性滑动
+        return false;
+    }
+
+    @Override
+    public boolean onNestedPreFling(View target, float velocityX, float velocityY) {
+        return false;
+    }
+
+    @Override
+    public int getNestedScrollAxes() {
+        // 垂直滚动
+        return mParentHelper.getNestedScrollAxes();
+    }
+```
+
+可以看到`NestedScrollingParentHelper`中主要处理了`getNestedScrollAxes()`，`onNestedScrollAccepted()`，`onNestedScrollAccepted()`，如果看源码，其实就是保存滑动方向状态和释放。
+
+
+### 流程分析
+
+到此，代码工作基本上结束，我在上面添加了一些log，让我们运行以下程序。简单的滑动后`log`如下。
+
+```
+NestChild: startNestedScroll
+NestParent: onStartNestedScroll
+NestChild: dispatchNestedPreScroll
+NestParent: onNestedPreScrollNestChild
+NestChild: dispatchNestedScroll
+NestParent: onNestedScrollNestChild
+// ......
+NestChild: stopNestedScroll
+NestParent: onStopNestedScrollNestChild
+```
+
+基本的log如下，通过此log可总结流程如下
+
+- `child:startNestedScroll `: 子控件开始滑动，调用该方法通知父类滑动即将开始。（DOWN）
+- `parent: onStartNestedScroll`：父控件收到子控件滑动状态的通知。
+- `child:dispatchNestedPreScroll`：子控件开始滑动的回调，和第一种区别在于此时有具体的滑动距离。
+- `parent:onNestedPreScroll`：父控件收到子控件准备滑动的通知，根据情况是否消耗滑动。
+- `child: dispatchNestedScroll`：子控件滑动完之后调用，通知父控件
+- `parent:onNestedScrollNestChild`：父控件收到子控件滑动之后的通知
+- `child:stopNestedScroll：` ： 子控件滑动结束的通知。
+- ` parent : onStopNestedScroll` ： 父控件收到子控件滑动结束的通知
+
+根据上面的分析，可以看到整个流程都是`child`和`parent`一一对应的。
+
+
+### 简单的源码分析
+
+首先从`child`的`startNestedScroll()`方法，其调用`mChildHelper.startNestedScroll(axes)`，再往下跟如下
+```java
+ public boolean startNestedScroll(int axes) {
+        if (hasNestedScrollingParent()) {
+            // Already in progress
+            return true;
+        }
+        if (isNestedScrollingEnabled()) {
+            ViewParent p = mView.getParent();
+            View child = mView;
+            while (p != null) {
+            	// 获取处理嵌套滑动的父控件
+                if (ViewParentCompat.onStartNestedScroll(p, child, mView, axes)) {
+                    mNestedScrollingParent = p;
+                    ViewParentCompat.onNestedScrollAccepted(p, child, mView, axes);
+                    return true;
+                }
+                if (p instanceof View) {
+                    child = (View) p;
+                }
+                p = p.getParent();
+            }
+        }
+        return false;
+    }
+```
+
+在该方法中，首先判断是否有父类在滚动，如果没有，判断当前控件是否可以嵌套滚动，然后获取他的父控件，判断父控件是否处理嵌套滚动，如果处理，则结束循环。否则，以当前父控件为跟，获取父控件的父控件，继续判断。
+
+> 在`parent`的`public boolean onStartNestedScroll(View child, View target, int nestedScrollAxes)`中有参数`child`和`target`，通过改远吗不难发现，`child`就为循环的`child`，而`target`为循环中的`mView`。
+
+再看一下准备滑动的实现方法`mChildHelper.dispatchNestedPreScroll(dx, dy, consumed,offsetInWindow)`
+
+```java 
+public boolean dispatchNestedPreScroll(int dx, int dy, int[] consumed, int[] offsetInWindow) {
+	// 是否可以嵌套滑动的基本判断
+        if (isNestedScrollingEnabled() && mNestedScrollingParent != null) {
+            if (dx != 0 || dy != 0) {
+                int startX = 0;
+                int startY = 0;
+                if (offsetInWindow != null) {
+                  // 保存子控件的位置状态
+                    mView.getLocationInWindow(offsetInWindow);
+                    startX = offsetInWindow[0];
+                    startY = offsetInWindow[1];
+                }
+
+                if (consumed == null) {
+                    if (mTempNestedScrollConsumed == null) {
+                        mTempNestedScrollConsumed = new int[2];
+                    }
+                    consumed = mTempNestedScrollConsumed;
+                }
+                consumed[0] = 0;
+                consumed[1] = 0;
+                // 调用父控件，事件分发
+                ViewParentCompat.onNestedPreScroll(mNestedScrollingParent, mView, dx, dy, consumed);
+
+                if (offsetInWindow != null) {
+                   // 重新计算子控件的位置并获取偏移
+                    mView.getLocationInWindow(offsetInWindow);
+                    offsetInWindow[0] -= startX;
+                    offsetInWindow[1] -= startY;
+                }
+                return consumed[0] != 0 || consumed[1] != 0;
+            } else if (offsetInWindow != null) {
+                offsetInWindow[0] = 0;
+                offsetInWindow[1] = 0;
+            }
+        }
+        return false;
+    }
+
+```
+
+剩下的方法大体就是如上逻辑，不在多做分析。
+
+### 系统控件中已经默认实现两个接口的类
+
+- 实现`NestedScrollingChild`的类
+
+`NestedScrollView`，`HorizontalGridView`，`RecyclerView`，`SwipeRefreshLayout`，`VerticalGridView`
+
+- 实现`NestedScrollingParent`的类
+
+`NestedScrollView`，`CoordinatorLayout`，`SwipeRefreshLayout`
+
+### 总结
+
+对于Android中基础的事件体系，一旦子控件获取到事件并处理，父控件很难在处理滑动。而`NestedScrolling`的机制便是负责子控件获取完事件之后的滑动分发。能够通过`NestedScrolling`机制，在必要时，将子控件的滑动事件交给父控件去处理。
+
+ 
