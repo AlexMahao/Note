@@ -8,9 +8,7 @@
 
 因为状态栏是在4.4加入的，所以在4.4以前的系统上无法实现。现在世面上的手机android4.4一下的占比不是很大，所以不是太影响。
 
-网上有很多关于透明状态栏实现的技术博客，以及我之前的博客[透明状态栏（沉浸式状态栏）](http://blog.csdn.net/lisdye2/article/details/50583790)中，实现方式为通过设置`android：windowTanslucentStatus`和`fitSystemWindows`实现。
-
-但通过属性设置的方式在使用中会出现沉浸状态不一样的现象，在5.0及以上的系统中使用透明状态栏不是完全透明的，会在透明的基础上添加一层半透明的阴影，非常的不友好。于是解决在不同系统版本之间的适配是主要问题。
+通过属性设置的方式在使用中会出现沉浸状态不一样的现象，在5.0及以上的系统中使用透明状态栏不是完全透明的，会在透明的基础上添加一层半透明的阴影，非常的不友好。于是解决在不同系统版本之间的适配是主要问题。
 
 ## **解决方式**
 
@@ -28,12 +26,12 @@
 那么思路如下：
 
 - 当状态栏需要设置一个单纯的颜色时：
-	- 4.4：设置`android：windowTranslucateStatus`属性，并且手动添加一个和状态栏高度等高的View。
-	- 5.0及以上：不设置`android:windowTranslucateStatus`属性，直接设置`statusBarColor`的色值。
+  - 4.4：设置`android：windowTranslucateStatus`属性，并且手动添加一个和状态栏高度等高的View。
+  - 5.0及以上：不设置`android:windowTranslucateStatus`属性，直接设置`statusBarColor`的色值。
 
 - 当状态栏需要设置一个图片
-	- 4.4：直接设置`android：windowTranslucateStatus`属性。
-	- 5.0：不设置，同时设置状态栏颜色透明，并使用另一个属性。
+  - 4.4：直接设置`android：windowTranslucateStatus`属性。
+  - 5.0：不设置，同时设置状态栏颜色透明，并使用另一个属性。
 
 
 ### 代码实现

@@ -1,0 +1,115 @@
+
+### 服务器链接
+- `ssh android@192.168.xxxx` : 　链接远程服务器，＠前表示用户名，＠后表示服务器ip地址，之后会弹出输入密码相关选项。
+- `scp  xx.apk  android@192.168.xxxx:/home/android/` ：传输文件，第一个参数为源文件，后跟服务器地址路径，服务器地址和目录以:隔开
+
+### 挂载磁盘
+
+- `df -h`：查看磁盘挂则和使用情况
+
+```
+root@localhost project $ df -h
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda1        20G   19G   17M 100% /
+tmpfs           3.9G     0  3.9G   0% /dev/shm
+/dev/sdb        493G  155M  467G   1% /opt
+
+```
+
+- `umount /opt`：解除/opt节点下的磁盘挂载
+- `mount /dev/sdb /home`：挂载到/home目录下。
+
+
+### 用户创建和分组
+
+- `adduser android`：添加一个`android`用户，该命令同时会创建用户目录`home/android/`
+- `passwd android`：修改`android`用户密码，修改时如果密码简单会有相应提示但可以忽略。
+- `groupadd developer` ：创建一个`developer`的分组。
+- `usermode -g developer android`：修改`android`用户的组别到`developer`,之前使用`android`用户创建的文件，组别保留不变，需要手动修改到`developer`。
+- `groups android`：查看`android`用户所在的组
+- `chown -R android:developer project`：修改project目录所属的用户和所属的组。`-R`表示递归设置，会遍历project下的所有文件。
+
+### 删除用户
+
+- `userdel test`：删除test用户
+- `rm -rf /var/spool/mail/test /home/test`：删除参与文件
+
+### git安装
+
+因为使用的`RedHat`,`git`版本老旧，所以需要收到安装`git`。
+
+- `yum remove git`：删除系统中老旧的`git`。
+- `yum install curl-devel expat-devel gettext-devel openssl-devel zlib-devel perl-devel` ： 安装依赖
+- `cd /home/android/android-dev/`：切换到指定目录
+- `wget https://www.kernel.org/pub/software/scm/git/git-2.7.4.tar.gz`：下载对应版本源码。
+- `tar zxvf git-2.7.4.tar.gz`：解压源码
+- `cd git-2.7.4`：进入到解压的源码目录
+- `make configure`：编译源码
+- `make prefix=/usr/local/git install`：安装源码
+- `echo "export PATH=$PATH:/usr/local/git/bin" >> /etc/profile`：配置环境变量，添加`git`命令到系统
+- `source /etc/profile`:刷新系统配置。
+
+#### 配置git命令行提示（自动补全）
+
+配置完`git`环境变量之后，在命令行输入时，没有`git`对应的命令行提示。此时需要添加如下配置：
+
+- 去`github`上的`git`源码中下载`git-completion.bash`和`git-prompt.sh`,源码地址[https://github.com/git/git](https://github.com/git/git)
+- 将下载的文件移动到`/etc/profile.d/`目录下并修改文件名`git-completion.bash`为`git-completion.sh`
+- 在该目录下创建`git.sh`文件，并添加如下内容：
+
+```
+export GIT_PS1_SHOWDIRTYSTATE=1
+export GIT_PS1_SHOWSTASHSTATE=1
+export GIT_PS1_SHOWUNTRACKEDFILES=1
+export GIT_PS1_SHOWUPSTREAM="verbose git svn"
+PS1='\[\033[1;32m\]\u@\h \[\033[1;34m\]\W\[\033[1;31m\]$(__git_ps1 " (%s)")\[\033[1;35m\] $ \[\033[0m\]'
+```
+
+###JDK环境和Gradle环境
+
+只需要下载对应压缩包并配置环境变量即可
+
+### 配置Android SDK
+
+下载对应的sdk并解压并配置环境变量即可
+
+#### 更新命令
+
+因为linux无界面，所以更新sdk需要以命令的方式：
+
+- `android list sdk --all` : 显示所有可下载的sdk。`--all`省略则显示当前可以更新的。
+-`android update sdk -u -a -t 192` ： `-t`指定更新的序号，由上面的命令获取。`-u`表示非UI显示,`-a`表示序号是基于全部的 。
+
+### 升级glibc-2.14
+编译android项目时，报错如下错误：
+
+```
+/usr/local/share/adt-bundle-linux-x86_64-20140702/sdk/build-tools/25.0.3/aapt: /lib64/libc.so.6: version `GLIBC_2.14' not found (required by /usr/local/share/adt-bundle-linux-x86_64-20140702/sdk/build-tools/25.0.3/aapt)
+
+/usr/local/share/adt-bundle-linux-x86_64-20140702/sdk/build-tools/25.0.3/aapt: /lib64/libc.so.6: version `GLIBC_2.14' not found (required by /usr/local/share/adt-bundle-linux-x86_64-20140702/sdk/build-tools/25.0.3/lib64/libc++.so)
+```
+含义时缺少`GLIBC_2.14`。
+
+- `strings /lib64/libc.so.6 |grep GLIBC`：查看当前glibc支持的版本。
+
+#### 下载
+- `wget http://ftp.gnu.org/gnu/glibc/glibc-2.14.tar.gz`：下载对应版本
+
+#### 安装
+
+- `tar -zxvf glibc-2.14.tar.gz`
+- `cd glibc-2.14 | make build | cd build`
+- `../configure profix=/opt/glibc-2.14` 
+- `make -j4`
+- `make install`
+
+### 配置软链
+
+- `rm -rf /lib64/libc.so.6 ` ： 删除之前的链接，删除之后，系统的一些命令会无法使用。
+- `LD_PRELOAD=/opt/glibc-2.14/lib/libc-2.14.so ln -s /opt/glibc-2.14/lib/libc-2.14.so /lib64/libc.so.6` ： 设置软链指向最新版本
+
+- `LD_PRELOAD=/lib64/libc-2.12.so ln -s /lib64/libc-2.12.so /lib64/libc.so.6 // libc-2.12.so `：恢复之前系统的设置
+### 其他
+- `mv  git-completion.bash git-completion.sh`：`mv`既可以移动文件，也可以修改文件名。
+- `!820`：`history`后可以通过指定行号的方式快捷调用代码。
+- `source /etc/profile` <==> `.  /etc/profile` ： `.`等价于`source`
