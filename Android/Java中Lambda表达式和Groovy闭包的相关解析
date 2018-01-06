@@ -1,0 +1,425 @@
+### Lambda名词释义
+
+Lambda表达式表示匿名函数，和匿名类对比，及不需要声明函数的方法名和返回值，用表达式的形式完成函数的参数和相关逻辑。
+
+Lambda表达式应用于Groovy和Kotlin中，作为实现函数式编程的关键（函数式编程是指一个函数能够作为另一个函数的入参）。而在JDK8中支持了对Lambda表达式的应用。
+
+### 基本使用
+java中对lambda表达式的声明不像Kotlin等，其实质是用一种简单的方式完成一些简单接口的声明和初始化。举例如下：
+
+```java
+   Runnable runnable1 = new Runnable() {
+            @Override
+            public void run() {
+                System.out.println("Hello");
+            }
+        };
+    new Thread(runnable1).start();
+```
+对于启动一个线程并构造`Runnable`接口往往需要写这么多代码，而对于`Runnable`其实只关心`run()`方法的实现。而lambda便是为了解决这种问题，简化之后如下：
+```java
+// lambda表达式
+Runnable runnable = () -> {System.out.println("Hello")};
+new Thread(runnable).start();
+```
+可以发现其中`Runnable`的实现发生了变化，在java中lambda表达式的声明以`->`隔开，`->`之前声明参数，之后的`{}`是方法的逻辑。该表达式就是对`run()`的相关声明。因为`run()`方法没有参数，所以`->`之前用`()`表示。而`{}`中表示方法逻辑，和普通的方法逻辑一样，如果只有一行，则大括号可以忽略`() -> System.out.println("Hello")`。
+
+最后简化如下：
+
+```java
+new  Thread(() -> System.out.println("Hello")).start();
+```
+
+可以看到只需要一行就可以完成之前的代码逻辑。
+
+> lambda表达式的实质是实现接口或抽象类并且完成方法的声明，而对于接口和抽象类要求必须仅有一个待实现的方法（特殊情况后面会提到）。
+
+> lambda表达式很容易将其方法体中的逻辑理解成立即运行，其实不是，具体什么时候走，要根据接口中的方法什么时候被调用。
+
+### 不同用法
+
+#### lambda需要一个参数
+
+有一个类如下
+```java
+@FunctionalInterface
+public interface Consumer<T> {
+    void accept(T t);
+}
+```
+
+实例该对象的方式如下：
+```java
+ Consumer<String> consumer = (String t) -> System.out.println(t);
+ Consumer<String> consumer = (t) -> System.out.println(t);
+```
+此时lambda就是对`accept(T t)`方法的实现。
+
+参数的声明可以省略，因为其实质是实现抽象或接口中的方法，那么参数类型肯定是明确的，而且编译器也能够帮我们检测出。
+
+如上逻辑还有一种写法：
+```java
+Consumer<String> consumer2 = System.out::println;
+```
+该种表示叫做方法引用，以`::`作为操作符，后面会分析。
+
+#### 两个参数和返回值
+
+java中比较器`Comparator`的类声明如下
+
+```java
+@FunctionalInterface
+public interface Comparator<T> {
+    int compare(T o1, T o2);
+    //...
+}
+```
+可以看到`compare()`既有参数又有返回值，那么构造`Comparator`实例的具体代码如下：
+
+```java
+ Comparator<Integer> comparator = ((num1, num2) -> {
+            return num1 - num2;
+        });
+```
+如果lambda表达式中有返回值并且方法逻辑只有一行，那么`return`可以省略，简化后如下：
+
+```java
+Comparator<Integer> comparator2 = ((num1, num2) -> num1 - num2);
+```
+
+#### 多个参数
+
+以此类推。。。
+
+### 函数式接口
+
+在jdk8中提出了函数式接口的概念，并且添加了`java.util.function`中包含了一些基本的函数式接口。
+
+上面对于lambda的使用，发现其实现依托于上下文，他必须有一个目标类型，该类型就是函数式接口。
+
+函数式接口代表的一种契约， 一种对某个特定函数类型的契约。 在它出现的地方，实际期望一个符合契约要求的函数。
+
+实现一个函数式接口很简单，类似`Runnable`接口的声明，里面包含一个待实现的方法。同时推荐在类上加上`@FunctionalInterface`注解。
+
+一个简单的函数是接口声明如下：
+
+```java
+
+@FunctionalInterface
+public interface FunctionalInterface {
+	// 使用lambda实现的方法
+	void count(int i);
+	
+	String toString(); //same to Object.toString
+	int hashCode(); //same to Object.hashCode
+	boolean equals(Object obj); //same to Object.equals
+}
+
+```
+对于一个函数式接口，其中可以包含`Object`中的方法声明，因为对于每一个接口的实例都继承于`Object`。同时也可以包含静态方法和默认方法（jdk8中接口可以有静态方法和默认方法）
+
+
+### 方法引用
+
+这种写法不知道你是还记得
+
+```java
+Consumer<String> consumer2 = System.out::println;
+```
+该声明实际上就是使用了方法的引用。
+
+对于一个接口的中的方法，我们可以使用lambda去实现，这样大大简便了代码的编写。假如，我们待实现的方法其实和已有的某个方法（无论是类中的静态还是成员方法）的逻辑一模一样，那么就可以使用上面的方法引用的方式。
+
+对于`Consumer<String>`需要实现的方法是`void accept(T t)`，仔细观察这个方法，无返回值，一个`String`类型的参数，那么只需要找一个符合这个的方法，就可以利用`::`将方法赋值给它。
+
+对于上面的逻辑其具体的逻辑如下：
+
+```java
+  Consumer<String> cc = new Consumer<String>() {
+            @Override
+            public void accept(String s) {
+                System.out.print(s);
+            }
+        };
+
+```
+
+假如我们现在有如下类：
+
+```java
+public class Method {
+
+    @FunctionalInterface
+    interface Concat {
+        String accept(String a, String b);
+    }
+
+    // 静态方法
+    public static String concat(String a, String b) {
+        return a + b;
+    }
+
+    // 成员方法
+    public String concat1(String a, String b) {
+        return a + b;
+    }
+
+    public static void main(String[] args){
+        //待实现
+    }
+}
+```
+其中包含了一个函数式接口，定义了方法`accept()`接受两个字符串参数并返回一个字符串。
+
+该类中包含了两个方法，一个静态方法一个成员方法，参数和返回值和`accept()`的相同。
+
+下面就使用这个类介绍下面几种情况
+
+**参数匹配下的静态方法引用**
+
+```java
+Concat concat = Method::concat;
+ System.out.println(concat.accept("123", "456"));// 123456
+​```java
+
+将静态方法的实现引用到了`accept()`上，当调用`accept()`时实际上调用的是`Method.concat()`方法。
+
+**参数匹配下的成员方法引用**
+
+​```java
+Concat concat1 = new Method()::concat1;
+System.out.println(concat.accept("123", "456"));// 123456
+```
+将成员方法引用到了`accept()`上，因为成员方法必须通过实例来获取。
+
+**参数不匹配的方法引用**
+
+```java
+ Concat concat2 = String::concat;
+ System.out.println(concat2.accept("123", "456"));// 123456
+```
+这个看着就比较诡异了，看一下`String.concat()`的方法声明：
+```
+public String concat(String str)
+```
+成员方法，一个参数，这明显不匹配啊。
+
+这里对于编译器来说，虽然`String.concat()`只有一个参数，但他是成员方法，调用的时候也需要一个字符串，这样就凑够了两个字符串，正好能够和`accept()`的两个参数匹配上。
+
+和如下代码逻辑一样
+
+```java
+concat2 = new Concat() {
+            @Override
+            public String accept(String a, String b) {
+                return a.concat(b);
+            }
+        };
+```
+
+**构造方法引用**
+
+我们新声明一个函数式接口如下：
+
+```java
+  @FunctionalInterface
+    interface StringM {
+        String accept(String a);
+    }
+```
+该方法的接口实现和`String`的构造方法类似，于是可以有如下操作：
+
+```java
+StringM stringM = String::new;
+```
+### Groovy中闭包的基本使用
+
+在java中使用`lambda`表达式还要依托于一个上下文类型，及针对某一个函数式接口。而在groovy中，将他单独抽出了一种类型及闭包。
+
+对于一个闭包，不需要依托上下文去判断他需要几个参数返回值等等，我们可以先考虑闭包的编写，再考虑怎么用它，和java相反。
+
+对于一个闭包的简单使用如下：
+
+```groovy
+ 	// 声明一个闭包
+        Closure listener = { e -> println "Clicked on $e" }
+        // 两种调用方式
+        listener("str")
+        listener.call("str")
+
+```
+调用方式两种：以函数的方式调用或者是调用`call()`方法。
+
+同时，闭包也可以作为方法的参数传入，其类似于一个`Callback`接口,通过`call()`方法调用闭包中调用的逻辑。
+
+### Groovy中闭包的委托对象
+
+在`Closure`中有一个属性为`delegate`,该属性表示我们可以为闭包设置一个代理对象，那么在闭包中可以直接使用这个代理对象的一些方法。
+
+```groovy
+class DelegateDemo {
+
+    static void main(String[] args) {
+        Closure c = {
+            // 调用代理对象的方法
+            test()
+        }
+        // 设置代理对象
+        c.delegate = new DelegateDemo()
+        //运行闭包
+        c.call()
+    }
+
+    void test() {
+        println("this is delegate")
+    }
+
+}
+
+```
+### 利用Groovy模仿Gradle中的`dependencies`依赖声明
+
+关键点便在于委托
+
+声明一个类用于存储所有的依赖，代码如下：
+
+```groovy
+  static class Dependency {
+  	// 保存所有的依赖
+        Set<String> api = new HashSet<>();
+        // 添加依赖的方法
+        void api(String text){
+            api.add(text)
+        }
+        // 执行方法，暂时只是打印所有依赖
+        void exec(){
+            println(api)
+        }
+    }
+```
+该类同时将作为一个闭包的代理对象。
+
+其次，声明一个方法，该方法的参数为一个闭包。
+
+```groovy
+ static void dependencies(Closure closure) {
+ 	// 声明一个代理对象
+        def dependency = new Dependency()
+        // 设置委托
+        closure.delegate = dependency
+        // 运行闭包
+        closure.call()
+        // 执行
+        dependency.exec()
+    }
+```
+最后看一下如何使用
+
+```groovy
+ static void main(String[] args) {
+        dependencies {
+            api	'cn.jiguang.sdk.plugin:xiaomi:3.1.0'
+            api	'cn.jiguang.sdk.plugin:huawei:3.1.0'
+            api	'cn.jiguang.sdk.plugin:meizu:3.1.0'
+        }
+    }
+```
+
+是不是很眼熟。。。。
+
+执行结果：
+```
+[cn.jiguang.sdk.plugin:meizu:3.1.0, cn.jiguang.sdk.plugin:xiaomi:3.1.0, cn.jiguang.sdk.plugin:huawei:3.1.0]
+```
+
+### 利用Groovy模仿一个Task任务
+
+在使用`Gradle`中，可以通过声明一个`task`并添加`doLast`和`doFirst`回调，而下面就开始仿写一个类似的逻辑。关键点在于闭包和代理对象。
+
+根据上一个例子，分为三步：
+
+**第一步：声明代理委托对象**
+
+```groovy
+ static class Task {
+        String config = ""
+        Closure doLast = {}
+        Closure doFirst = {}
+
+        void doLast(Closure c) {
+            doLast = c
+        }
+
+        void doFirst(Closure c) {
+            doFirst = c
+        }
+        // 执行任务，只是简单打印一下配置
+        void exec() {
+            println(config)
+        }
+        // 提供一个配置选项
+        void config(String text) {
+            config = text
+        }
+    }
+```
+
+**第二步：声明一个以闭包作为参数的方法**
+
+```groovy
+    static void task(String name, Closure closure) {
+        def task = new Task()
+        closure.delegate = task
+        // 执行闭包，实质是对task坐初始化
+        closure()
+        // 调用doFirst
+        task.doFirst.call()
+        // 调用执行方法
+        task.exec()
+        // 调用doLast()方法
+        task.doLast.call()
+    }
+```
+**第三步：使用**
+
+```groovy
+ static void main(String[] args) {
+        task("test") {
+            config("123")
+            doLast {
+                println("doLast")
+            }
+            doFirst {
+                println("doFirst")
+            }
+        }
+    }
+```
+在这里，有一个关键，如果闭包作为最后一个参数，那么他可以写到`()`外面。
+
+同事，如果调用的方法的参数如果仅为一个，则可以使用空格的方式，最终如下：
+
+```groovy
+  task("test") {
+            config "123"
+            doLast {
+                println("doLast")
+            }
+            doFirst {
+                println("doFirst")
+            }
+        }
+```
+
+**打印结果**
+
+```
+doFirst
+123
+doLast
+
+```
+
+
+
+
